@@ -41,12 +41,31 @@ Everything lives in `.env`:
 | `DOMAIN` | *(required)* | Hostname Caddy serves and requests a cert for |
 | `ACME_EMAIL` | empty | Let's Encrypt expiry notices; recommended |
 | `RATE_LIMIT_PER_MIN` | `30` | API requests per client IP per minute |
+| `TELEGRAM_TOKEN` | empty | Bot token from @BotFather; required for the bot |
+| `TELEGRAM_ALLOWED_IDS` | empty | Comma-separated user ids; empty means anyone |
 
 The app also reads `TRUST_PROXY` (set to `1` in compose). It must stay `1` while
 Caddy is the only proxy in front: without it every request appears to come from
 Caddy's container IP and the rate limit turns into one global bucket instead of
 one per client. If you put Cloudflare or another proxy in front of Caddy, raise
 it to `2`.
+
+## Telegram bot
+
+The bot runs as a third container behind a compose profile, so the default
+`docker compose up -d` leaves it off. To enable it, put a token in `.env` and:
+
+```bash
+docker compose --profile bot up -d
+docker compose logs -f bot        # should log "running as @yourbot"
+```
+
+It uses long polling, so it needs no inbound port and no webhook URL. Its
+download buttons are built from `PUBLIC_BASE_URL`, which compose sets to
+`https://$DOMAIN` — so the bot only works properly once TLS is up.
+
+Set `TELEGRAM_ALLOWED_IDS` unless you want the bot public. An open bot is an open
+proxy for your bandwidth, and it is discoverable by username.
 
 ## Operations
 
