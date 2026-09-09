@@ -1,0 +1,40 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Caddy is the only thing in front of the app, so trust exactly one hop.
+      TRUST_PROXY: 1
+      RATE_LIMIT_PER_MIN: ${RATE_LIMIT_PER_MIN:-30}
+    expose:
+      - '3000'
+    networks:
+      - web
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - web
+
+networks:
+  web:
+
+volumes:
+  caddy_data:
+  caddy_config:

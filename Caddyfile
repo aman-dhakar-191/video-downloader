@@ -1,0 +1,26 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	# Caddy's default encode matcher only compresses text-ish content types, so
+	# the media stream from /api/download passes through untouched and keeps its
+	# Content-Length (and therefore the browser's progress bar).
+	encode zstd gzip
+
+	# Caddy streams proxied responses and applies no response timeout by
+	# default, so long downloads are not cut short.
+	reverse_proxy app:3000
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
