@@ -4,6 +4,7 @@ npm-debug.log
 .gitignore
 .env
 test
+tools
 README.md
 DEPLOY.md
 Dockerfile
