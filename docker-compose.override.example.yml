@@ -1,0 +1,13 @@
+# Copy to docker-compose.override.yml for host-specific settings. Compose merges
+# it automatically, and it is gitignored — so local deployment tweaks stop
+# colliding with `git pull` on the tracked docker-compose.yml.
+#
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+
+services:
+  # Publish the app directly when Caddy is not fronting it. Prefer binding to
+  # 127.0.0.1 and putting a proxy in front; 0.0.0.0 exposes it to the internet
+  # unencrypted, with no authentication.
+  app:
+    ports:
+      - '3000:3000'

@@ -67,6 +67,21 @@ download buttons are built from `PUBLIC_BASE_URL`, which compose sets to
 Set `TELEGRAM_ALLOWED_IDS` unless you want the bot public. An open bot is an open
 proxy for your bandwidth, and it is discoverable by username.
 
+## Host-specific settings
+
+Do not edit the tracked `docker-compose.yml` on a deployed host — every `git
+pull` will then abort with "local changes would be overwritten". Put host
+specifics in an override instead, which compose merges automatically and git
+ignores:
+
+```bash
+cp docker-compose.override.example.yml docker-compose.override.yml
+```
+
+The example publishes the app's port directly, for hosts not yet fronted by
+Caddy. Set `PUBLIC_BASE_URL` in `.env` to match, or the bot's Download buttons
+will point at an address nobody can reach.
+
 ## Operations
 
 ```bash
