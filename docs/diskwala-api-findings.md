@@ -24,9 +24,17 @@ extraction strategy can ever work here; this is why the current resolver fails.
 /user/profile            /user/generate_short_code   /user/*
 ```
 
-Every `/file/*_info` endpoint is `POST`, called as `axios.post(path, payload)`.
-`/file/temp_info` is the plausible match for `/app/:id`, but the exact payload
-key for the id is **not yet established** and must not be guessed.
+**The call behind `/app/:id`, confirmed by browser capture:**
+
+```
+POST https://ddudapidd.diskwala.com/api/v1/file/temp_info
+body:    {"id":"<the 24-char id from the page URL>"}
+headers: Appicrypt: <ES256 JWT>
+         Appicrypt-ts: <epoch milliseconds>
+         Referer: https://www.diskwala.com/
+```
+
+The app first issues `GET /api/v1/auth`, also signed. The id key is plain `id`.
 
 ## The blocker: signed requests
 
@@ -80,10 +88,15 @@ That has real costs, which are the actual decision to make:
 
 ## Not yet established
 
-Run `tools/capture-diskwala.mjs` to answer, from real traffic:
+The first capture recorded both API requests but no responses, and the SPA
+rendered its **404 route** (`page: https://www.diskwala.com/404`, title
+`Page Not Found | DiskWala`). So either the test id is invalid/expired, or
+`temp_info` refused the request. Open questions:
 
-1. Which endpoint `/app/:id` actually calls, and the exact request body.
-2. The response JSON shape and where the media URL sits inside it.
-3. Whether the media URL is signed/expiring, and whether the CDN requires a
+1. The `temp_info` response body, and where the media URL sits inside it.
+2. Whether the media URL is signed/expiring, and whether the CDN needs a
    `Referer`.
-4. Whether any of it works without an authenticated session.
+3. Whether any of it works without an authenticated session.
+
+Re-run the capture with an id confirmed to play in a normal browser before
+concluding anything about the API's behaviour.

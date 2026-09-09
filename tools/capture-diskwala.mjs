@@ -29,13 +29,16 @@ try {
   process.exit(1);
 }
 
-// Everything the page requests via script, plus media. Deliberately unfiltered:
-// the API host is known (ddudapidd.diskwala.com) but the call behind /app/:id is
-// not, and a filter that hid it would cost another round trip.
-const NOISE = /google-analytics|googletagmanager|cloudflareinsights|doubleclick|facebook|sentry/i;
+// This page runs a full prebid ad stack: ~50 bidder calls that bury the two
+// requests worth reading. Default to Diskwala's own traffic plus media; pass
+// --all when something might be hiding in the noise.
+const ALL = process.argv.includes('--all');
+const SIGNAL = /diskwala|\.(m3u8|mpd|mp4|m4v|webm|mkv)(\?|$)/i;
+const keep = (url) => ALL || SIGNAL.test(url);
 
 const OUT = '/tmp/diskwala-diag';
 const records = [];
+const pageState = {};
 
 // The capture is the deliverable, so it is reported even when navigation fails.
 // An SPA behind Cloudflare may never reach a quiet network, and the API call we
@@ -52,6 +55,7 @@ async function report() {
     console.log('\n' + '-'.repeat(70));
     console.log(`${r.method} ${r.url}`);
     console.log(`type: ${r.resourceType}   status: ${r.status ?? '(no response seen)'}`);
+    if (r.failure) console.log(`FAILED: ${r.failure}`);
 
     const notable = Object.entries(r.requestHeaders || {}).filter(([k]) =>
       /auth|token|referer|origin|cookie|appicrypt|x-/i.test(k)
@@ -72,6 +76,16 @@ async function report() {
       }
       console.log(`\nresponse body:\n${body}`);
     }
+  }
+
+  console.log('\n' + '='.repeat(70));
+  console.log('WHAT THE PAGE ACTUALLY RENDERED');
+  console.log(`  final URL: ${pageState.url || '(unknown)'}`);
+  console.log(`  title:     ${pageState.title || '(unknown)'}`);
+  if (/not found|404/i.test(`${pageState.title} ${pageState.url}`)) {
+    console.log('\n  The app routed to its 404 page: it did not recognise this id.');
+    console.log('  Confirm the link opens a playing video in your own browser before');
+    console.log('  reading anything else here - the API answered, just not usefully.');
   }
 
   const media = records.filter((r) => /\.(m3u8|mpd|mp4|m4v|webm|mkv)(\?|$)/i.test(r.url));
@@ -99,7 +113,7 @@ const page = await context.newPage();
 page.on('request', (req) => {
   const type = req.resourceType();
   if (type !== 'xhr' && type !== 'fetch' && type !== 'media') return;
-  if (NOISE.test(req.url())) return;
+  if (!keep(req.url())) return;
   console.log(`  [${type}] ${req.method()} ${req.url()}`);
   records.push({
     url: req.url(),
@@ -110,12 +124,21 @@ page.on('request', (req) => {
   });
 });
 
+page.on('requestfailed', (req) => {
+  if (!keep(req.url())) return;
+  const rec = records.find((r) => r.url === req.url() && r.status === undefined);
+  const reason = req.failure()?.errorText || 'unknown';
+  console.log(`  [FAILED] ${req.method()} ${req.url()} -> ${reason}`);
+  if (rec) rec.failure = reason;
+});
+
 page.on('response', async (res) => {
   const rec = records.find((r) => r.url === res.url() && r.status === undefined);
   if (!rec) return;
   rec.status = res.status();
   rec.responseHeaders = res.headers();
   try {
+    await res.finished();
     const text = await res.text();
     rec.responseBody = text.length > 8000 ? text.slice(0, 8000) + '…[truncated]' : text;
   } catch {
@@ -153,6 +176,8 @@ try {
 await page.waitForTimeout(1500);
 
 try {
+  pageState.url = page.url();
+  pageState.title = await page.title();
   await fs.writeFile(`${OUT}/rendered.html`, await page.content());
 } catch {
   /* page may be gone; the capture matters more */
