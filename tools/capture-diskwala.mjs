@@ -3,8 +3,11 @@
 //
 // Loads a Diskwala page in headless Chromium and records every XHR/fetch and
 // media request: URL, method, request headers, request body, response status
-// and response JSON. This is the authoritative answer to "what request does the
-// frontend actually make", when static analysis of the bundle is inconclusive.
+// and response JSON.
+//
+// Diskwala signs every API call with an Appicrypt header computed client-side
+// (see docs/diskwala-api-findings.md), so the request cannot be reproduced with
+// a plain fetch. Running the real client is the way to observe what it does.
 //
 // Setup on the VPS (outside the app image):
 //   npm i -D playwright && npx playwright install --with-deps chromium
@@ -27,9 +30,10 @@ try {
   process.exit(1);
 }
 
-// Requests worth reporting: the API surface and anything that smells like media.
-const INTERESTING =
-  /\/(file|public|user|auth|video|media|stream|revenue)\/|\.(m3u8|mpd|mp4|m4v|webm|mkv)(\?|$)/i;
+// Everything the page requests via script, plus media. Deliberately unfiltered:
+// the API host is known (ddudapidd.diskwala.com) but the call for /app/:id is
+// not, and a filter that hides it would cost another round trip.
+const NOISE = /google-analytics|googletagmanager|cloudflareinsights|doubleclick|facebook|sentry/i;
 
 const browser = await chromium.launch();
 const context = await browser.newContext({
@@ -44,7 +48,7 @@ const records = [];
 page.on('request', (req) => {
   const type = req.resourceType();
   if (type !== 'xhr' && type !== 'fetch' && type !== 'media') return;
-  if (!INTERESTING.test(req.url())) return;
+  if (NOISE.test(req.url())) return;
   records.push({
     url: req.url(),
     method: req.method(),
@@ -84,7 +88,8 @@ await browser.close();
 
 // ------------------------------------------------------------------- report
 if (records.length === 0) {
-  console.log('No matching requests captured. Widen the INTERESTING regex and retry.');
+  console.log('No script-initiated requests captured. The page may have failed to');
+  console.log('load, or NOISE is filtering too aggressively.');
   process.exit(0);
 }
 
@@ -114,6 +119,12 @@ for (const r of records) {
   }
   console.log();
 }
+
+const fs = await import('node:fs/promises');
+const outFile = '/tmp/diskwala-diag/capture.json';
+await fs.mkdir('/tmp/diskwala-diag', { recursive: true });
+await fs.writeFile(outFile, JSON.stringify(records, null, 2));
+console.log(`full capture saved to ${outFile}\n`);
 
 const media = records.filter((r) => /\.(m3u8|mpd|mp4|m4v|webm|mkv)(\?|$)/i.test(r.url));
 console.log('='.repeat(70));
