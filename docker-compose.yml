@@ -23,8 +23,10 @@ services:
       NODE_ENV: production
       TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?set TELEGRAM_TOKEN in .env to run the bot}
       TELEGRAM_ALLOWED_IDS: ${TELEGRAM_ALLOWED_IDS:-}
-      # Download buttons must point at the public hostname, not the container.
-      PUBLIC_BASE_URL: https://${DOMAIN}
+      # Download buttons must point at whatever address users can actually
+      # reach. Defaults to the Caddy hostname, but override PUBLIC_BASE_URL in
+      # .env when serving over a bare IP or a port other than 443.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://${DOMAIN}}
     networks:
       - web
 
