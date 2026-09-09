@@ -13,6 +13,21 @@ services:
     networks:
       - web
 
+  # Optional; started only with: docker compose --profile bot up -d
+  bot:
+    build: .
+    command: ['node', 'bot.js']
+    restart: unless-stopped
+    profiles: ['bot']
+    environment:
+      NODE_ENV: production
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:?set TELEGRAM_TOKEN in .env to run the bot}
+      TELEGRAM_ALLOWED_IDS: ${TELEGRAM_ALLOWED_IDS:-}
+      # Download buttons must point at the public hostname, not the container.
+      PUBLIC_BASE_URL: https://${DOMAIN}
+    networks:
+      - web
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

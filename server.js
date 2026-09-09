@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { resolveVideo, parseInputUrl, safeFilename, ResolveError, UA } from './lib/resolve.js';
+import { downloadPath } from './lib/links.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -51,12 +52,7 @@ app.post('/api/resolve', async (req, res) => {
       sources: info.sources.map((s) => ({
         ...s,
         filename: safeFilename(info.title, s.url),
-        downloadPath:
-          s.kind === 'file'
-            ? `/api/download?src=${encodeURIComponent(s.url)}&ref=${encodeURIComponent(
-                info.pageUrl
-              )}&name=${encodeURIComponent(safeFilename(info.title, s.url))}`
-            : null,
+        downloadPath: downloadPath(s, info.pageUrl, info.title),
       })),
     });
   } catch (err) {

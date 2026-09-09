@@ -24,6 +24,26 @@ cp .env.example .env    # set DOMAIN and ACME_EMAIL
 docker compose up -d --build
 ```
 
+## Telegram bot (optional)
+
+`bot.js` is a zero-dependency long-polling bot that shares `lib/resolve.js` with
+the web app. Send it a Diskwala link and it replies with buttons.
+
+It deliberately does **not** send the video file: the Bot API caps bot uploads at
+50 MB and most videos are larger. Each resolved file gets two buttons — a
+**Download** button pointing at this app's `/api/download` proxy (proper
+filename, survives hotlink protection, uses your bandwidth) and a **Direct link**
+to the CDN (free, but breaks if the upstream checks `Referer`). HLS/DASH sources
+get the manifest plus an `ffmpeg` command instead, since there is no single file.
+
+```bash
+TELEGRAM_TOKEN=... PUBLIC_BASE_URL=https://your-domain npm run bot
+```
+
+Set `TELEGRAM_ALLOWED_IDS` to a comma-separated list of numeric user ids.
+Without it the bot answers anyone who finds it, and every button they tap spends
+your bandwidth.
+
 ## How it works
 
 1. `POST /api/resolve { url }` fetches the page server-side with a browser-like
