@@ -13,6 +13,17 @@ npm start          # http://localhost:3000
 
 No build step, no frontend framework — `public/index.html` is the whole UI.
 
+```bash
+npm test           # unit tests, no network
+```
+
+To deploy on a VPS with Docker and automatic HTTPS, see **[DEPLOY.md](DEPLOY.md)**:
+
+```bash
+cp .env.example .env    # set DOMAIN and ACME_EMAIL
+docker compose up -d --build
+```
+
 ## How it works
 
 1. `POST /api/resolve { url }` fetches the page server-side with a browser-like
@@ -51,6 +62,8 @@ URL), regex extraction won't reach it — that case needs a headless browser
   addresses.
 - Public pages only. There is no login, token, or DRM handling, and none should
   be added.
-- 30 requests/minute per IP, in-process.
+- 30 requests/minute per IP, in-process (`RATE_LIMIT_PER_MIN` to change).
+- No authentication. Deployed publicly, anyone who finds the URL uses your
+  bandwidth — see the deployment caveats in DEPLOY.md.
 
 Use it for content you have the right to download.

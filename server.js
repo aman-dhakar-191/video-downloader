@@ -7,17 +7,36 @@ import { resolveVideo, parseInputUrl, safeFilename, ResolveError, UA } from './l
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+const RATE_LIMIT = Number(process.env.RATE_LIMIT_PER_MIN || 30);
+
+// Behind Caddy/nginx, req.ip must come from X-Forwarded-For or every client
+// shares the proxy's address and the rate limit becomes a global cap.
+if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY);
 
 app.use(express.json({ limit: '16kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.get('/healthz', (_req, res) => res.json({ ok: true }));
+
 // Very small in-process rate limit so one client cannot hammer the upstream.
 const hits = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 60_000;
+  for (const [key, times] of hits) {
+    const kept = times.filter((t) => t > cutoff);
+    if (kept.length) hits.set(key, kept);
+    else hits.delete(key);
+  }
+}, 60_000).unref();
+
 app.use('/api', (req, res, next) => {
   const now = Date.now();
   const key = req.ip;
   const window = (hits.get(key) || []).filter((t) => now - t < 60_000);
-  if (window.length >= 30) return res.status(429).json({ error: 'Too many requests, slow down.' });
+  if (window.length >= RATE_LIMIT) {
+    return res.status(429).json({ error: 'Too many requests, slow down.' });
+  }
   window.push(now);
   hits.set(key, window);
   next();
@@ -100,6 +119,12 @@ app.get('/api/download', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Diskwala downloader listening on http://localhost:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  console.log(`Diskwala downloader listening on http://${HOST}:${PORT}`);
 });
+
+// Compose sends SIGTERM on `down`/`restart`; exit cleanly instead of waiting
+// out the 10s kill timeout on every deploy.
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => server.close(() => process.exit(0)));
+}
