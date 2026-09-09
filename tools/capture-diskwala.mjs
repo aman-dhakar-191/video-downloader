@@ -9,11 +9,10 @@
 // (see docs/diskwala-api-findings.md), so the request cannot be reproduced with
 // a plain fetch. Running the real client is the way to observe what it does.
 //
-// Setup on the VPS (outside the app image):
-//   npm i -D playwright && npx playwright install --with-deps chromium
-//
 // Usage:
 //   node tools/capture-diskwala.mjs https://www.diskwala.com/app/<id>
+
+import fs from 'node:fs/promises';
 
 const pageUrl = process.argv[2];
 if (!pageUrl) {
@@ -26,16 +25,70 @@ try {
   ({ chromium } = await import('playwright'));
 } catch {
   console.error('playwright is not installed. From the repo root, run:');
-  console.error('  npm i -D playwright && npx playwright install --with-deps chromium');
+  console.error('  npm i playwright && npx playwright install --with-deps chromium');
   process.exit(1);
 }
 
 // Everything the page requests via script, plus media. Deliberately unfiltered:
-// the API host is known (ddudapidd.diskwala.com) but the call for /app/:id is
-// not, and a filter that hides it would cost another round trip.
+// the API host is known (ddudapidd.diskwala.com) but the call behind /app/:id is
+// not, and a filter that hid it would cost another round trip.
 const NOISE = /google-analytics|googletagmanager|cloudflareinsights|doubleclick|facebook|sentry/i;
 
-const browser = await chromium.launch();
+const OUT = '/tmp/diskwala-diag';
+const records = [];
+
+// The capture is the deliverable, so it is reported even when navigation fails.
+// An SPA behind Cloudflare may never reach a quiet network, and the API call we
+// are after happens long before that would matter.
+async function report() {
+  await fs.mkdir(OUT, { recursive: true });
+  await fs.writeFile(`${OUT}/capture.json`, JSON.stringify(records, null, 2));
+
+  console.log('\n' + '='.repeat(70));
+  console.log(`CAPTURED ${records.length} REQUEST(S)  ->  ${OUT}/capture.json`);
+  console.log('='.repeat(70));
+
+  for (const r of records) {
+    console.log('\n' + '-'.repeat(70));
+    console.log(`${r.method} ${r.url}`);
+    console.log(`type: ${r.resourceType}   status: ${r.status ?? '(no response seen)'}`);
+
+    const notable = Object.entries(r.requestHeaders || {}).filter(([k]) =>
+      /auth|token|referer|origin|cookie|appicrypt|x-/i.test(k)
+    );
+    if (notable.length) {
+      console.log('\nnotable request headers:');
+      for (const [k, v] of notable) console.log(`  ${k}: ${v}`);
+    }
+
+    if (r.requestBody) console.log(`\nrequest body:\n  ${r.requestBody}`);
+
+    if (r.responseBody) {
+      let body = r.responseBody;
+      try {
+        body = JSON.stringify(JSON.parse(body), null, 2);
+      } catch {
+        /* not JSON; print raw */
+      }
+      console.log(`\nresponse body:\n${body}`);
+    }
+  }
+
+  const media = records.filter((r) => /\.(m3u8|mpd|mp4|m4v|webm|mkv)(\?|$)/i.test(r.url));
+  console.log('\n' + '='.repeat(70));
+  console.log('MEDIA URLS OBSERVED:');
+  if (media.length) {
+    media.forEach((m) => console.log('  ' + m.url));
+    console.log('\nCheck these for a signature/expiry parameter. If present the URL is');
+    console.log('temporary: it cannot be cached and a shared link may expire before use.');
+  } else {
+    console.log('  none');
+  }
+}
+
+const browser = await chromium.launch({
+  args: ['--no-sandbox', '--disable-dev-shm-usage'],
+});
 const context = await browser.newContext({
   userAgent:
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -43,12 +96,11 @@ const context = await browser.newContext({
 });
 const page = await context.newPage();
 
-const records = [];
-
 page.on('request', (req) => {
   const type = req.resourceType();
   if (type !== 'xhr' && type !== 'fetch' && type !== 'media') return;
   if (NOISE.test(req.url())) return;
+  console.log(`  [${type}] ${req.method()} ${req.url()}`);
   records.push({
     url: req.url(),
     method: req.method(),
@@ -72,67 +124,39 @@ page.on('response', async (res) => {
 });
 
 console.log(`loading ${pageUrl} …\n`);
-await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 60_000 });
 
-// The player often only requests media after it mounts; give it a moment, and
-// try a click in case playback is gated behind one.
-await page.waitForTimeout(5000);
 try {
-  await page.locator('video, [class*="play"], button').first().click({ timeout: 3000 });
-  await page.waitForTimeout(5000);
+  // domcontentloaded, not networkidle: analytics and websockets keep this page
+  // permanently busy, so networkidle times out having already captured plenty.
+  await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  console.log('\n  DOM loaded; waiting for the app to make its API calls …');
+} catch (err) {
+  console.log(`\n  navigation problem: ${err.message.split('\n')[0]}`);
+  console.log('  continuing anyway — anything captured before this is still reported.');
+}
+
+await page.waitForTimeout(10_000);
+
+// The player may only request media once something is clicked.
+try {
+  await page
+    .locator('video, button, [class*="play"], [class*="Play"]')
+    .first()
+    .click({ timeout: 5000 });
+  console.log('  clicked a candidate play control; waiting …');
+  await page.waitForTimeout(10_000);
 } catch {
-  /* nothing clickable; fine */
+  console.log('  nothing clickable found; continuing.');
+}
+
+// Let in-flight response handlers finish before tearing the browser down.
+await page.waitForTimeout(1500);
+
+try {
+  await fs.writeFile(`${OUT}/rendered.html`, await page.content());
+} catch {
+  /* page may be gone; the capture matters more */
 }
 
 await browser.close();
-
-// ------------------------------------------------------------------- report
-if (records.length === 0) {
-  console.log('No script-initiated requests captured. The page may have failed to');
-  console.log('load, or NOISE is filtering too aggressively.');
-  process.exit(0);
-}
-
-for (const r of records) {
-  console.log('='.repeat(70));
-  console.log(`${r.method} ${r.url}`);
-  console.log(`resourceType: ${r.resourceType}   status: ${r.status ?? '(no response seen)'}`);
-
-  const notableHeaders = Object.entries(r.requestHeaders).filter(([k]) =>
-    /auth|token|referer|origin|cookie|x-/i.test(k)
-  );
-  if (notableHeaders.length) {
-    console.log('\nnotable request headers:');
-    for (const [k, v] of notableHeaders) console.log(`  ${k}: ${v}`);
-  }
-
-  if (r.requestBody) console.log(`\nrequest body:\n  ${r.requestBody}`);
-
-  if (r.responseBody) {
-    let body = r.responseBody;
-    try {
-      body = JSON.stringify(JSON.parse(body), null, 2);
-    } catch {
-      /* not JSON; print raw */
-    }
-    console.log(`\nresponse body:\n${body}`);
-  }
-  console.log();
-}
-
-const fs = await import('node:fs/promises');
-const outFile = '/tmp/diskwala-diag/capture.json';
-await fs.mkdir('/tmp/diskwala-diag', { recursive: true });
-await fs.writeFile(outFile, JSON.stringify(records, null, 2));
-console.log(`full capture saved to ${outFile}\n`);
-
-const media = records.filter((r) => /\.(m3u8|mpd|mp4|m4v|webm|mkv)(\?|$)/i.test(r.url));
-console.log('='.repeat(70));
-console.log('MEDIA URLS OBSERVED:');
-if (media.length) {
-  media.forEach((m) => console.log('  ' + m.url));
-  console.log('\nCheck these for a signature/expiry query parameter. If present, the');
-  console.log('URL is temporary and must be resolved per request, never cached.');
-} else {
-  console.log('  none — the player may build the URL only on user interaction.');
-}
+await report();
