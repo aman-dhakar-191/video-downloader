@@ -86,17 +86,51 @@ That has real costs, which are the actual decision to make:
 - Media URLs from this kind of API are usually signed and short-lived, so they
   cannot be cached, and a "Direct link" handed to a user may expire before use.
 
-## Not yet established
+## Conclusion: the web page never exposes the media
 
-The first capture recorded both API requests but no responses, and the SPA
-rendered its **404 route** (`page: https://www.diskwala.com/404`, title
-`Page Not Found | DiskWala`). So either the test id is invalid/expired, or
-`temp_info` refused the request. Open questions:
+Opening the same `/app/:id` URL in an ordinary desktop browser renders a
+working page - not the 404 the headless capture hit. What it renders settles
+the project:
 
-1. The `temp_info` response body, and where the media URL sits inside it.
-2. Whether the media URL is signed/expiring, and whether the CDN needs a
-   `Referer`.
-3. Whether any of it works without an authenticated session.
+- A "Shared File" card: mime type (`video/mp4`) and size (`23.25 MB`).
+- The filename **masked** (`*i**Wa*a_*iL*_6*f93*****`), and the uploader name
+  masked the same way.
+- Two actions: **View in App** and **Download App**, plus "Copy link to open
+  in browser".
+- A panel headed "Open in DiskWala App - Download the app to access this file
+  and all DiskWala content."
 
-Re-run the capture with an id confirmed to play in a normal browser before
-concluding anything about the API's behaviour.
+There is no `<video>` element and no player. The web page is a landing page
+whose purpose is to send the visitor to the mobile app. The masking is
+deliberate, not a rendering artifact.
+
+So there is no media URL on the page to extract, with or without a browser.
+`temp_info` returns metadata for this card; the media itself is gated behind
+the app.
+
+### Why the headless capture saw a 404
+
+The same id renders for a normal browser and 404s for headless Chromium from
+a datacenter IP. The most likely cause is the Appicrypt attestation failing
+for a non-genuine client - which is exactly what that product exists to do.
+The ad-bidder payloads in the capture confirm the browser advertised itself
+as `HeadlessChrome`.
+
+This matters beyond the diagnostic: it means driving a real browser
+server-side, the one remaining approach considered here, does not reliably
+work either. Both routes are closed.
+
+## Status: not implementable within this project's scope
+
+Getting the media would require defeating the attestation that gates the API,
+or reimplementing the mobile app's client - both squarely outside the scope in
+`README.md` ("no login, token, or DRM handling, and none should be added").
+
+The one avenue that is not circumvention is Diskwala's own **"Copy link to
+open in browser"** control. If that yields a direct media URL, the existing
+resolver can use it. If it yields another `/app/:id` page, there is nothing
+further to try.
+
+The web app, the download proxy, the Telegram bot and the deployment all work
+and are independent of this. They are ready for any host that publishes a
+reachable media URL.
